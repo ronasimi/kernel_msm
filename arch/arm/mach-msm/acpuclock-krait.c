@@ -46,6 +46,12 @@
 
 #define SECCLKAGD		BIT(4)
 
+#ifdef CONFIG_LOW_CPUCLOCKS
+#define FREQ_TABLE_SIZE		39
+#else
+#define FREQ_TABLE_SIZE		35
+#endif
+
 static DEFINE_MUTEX(driver_lock);
 static DEFINE_SPINLOCK(l2_lock);
 
@@ -927,8 +933,8 @@ static void __init bus_init(const struct l2_level *l2_level)
 
 #ifdef CONFIG_USERSPACE_VOLTAGE_CONTROL
 
-#define HFPLL_MIN_VDD		 750000
-#define HFPLL_MAX_VDD		1200000
+#define HFPLL_MIN_VDD		 600000
+#define HFPLL_MAX_VDD		1450000
 
 ssize_t acpuclk_get_vdd_levels_str(char *buf) {
 
@@ -974,7 +980,7 @@ void acpuclk_set_vdd(unsigned int khz, int vdd_uv) {
 #endif
 
 #ifdef CONFIG_CPU_FREQ_MSM
-static struct cpufreq_frequency_table freq_table[NR_CPUS][35];
+static struct cpufreq_frequency_table freq_table[NR_CPUS][FREQ_TABLE_SIZE];
 
 static void __init cpufreq_table_init(void)
 {

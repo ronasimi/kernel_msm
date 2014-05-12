@@ -108,6 +108,9 @@ static int msm_cpufreq_target(struct cpufreq_policy *policy,
 		goto done;
 	}
 
+	if (table[index].frequency == policy->cur)
+		goto done;
+
 	pr_debug("CPU[%d] target %d relation %d (%d-%d) selected %d\n",
 		policy->cpu, target_freq, relation,
 		policy->min, policy->max, table[index].frequency);
@@ -192,7 +195,11 @@ int msm_cpufreq_set_freq_limits(uint32_t cpu, uint32_t min, uint32_t max)
 }
 EXPORT_SYMBOL(msm_cpufreq_set_freq_limits);
 
-static int __cpuinit msm_cpufreq_init(struct cpufreq_policy *policy)
+#ifdef CONFIG_LOW_CPUCLOCKS
+#define LOW_CPUCLOCKS_FREQ_MIN	162000
+#endif
+
+static int msm_cpufreq_init(struct cpufreq_policy *policy)
 {
 	int cur_freq;
 	int index;
@@ -211,13 +218,21 @@ static int __cpuinit msm_cpufreq_init(struct cpufreq_policy *policy)
 
 	if (cpufreq_frequency_table_cpuinfo(policy, table)) {
 #ifdef CONFIG_MSM_CPU_FREQ_SET_MIN_MAX
+#ifdef CONFIG_LOW_CPUCLOCKS
+		policy->cpuinfo.min_freq = LOW_CPUCLOCKS_FREQ_MIN;
+#else
 		policy->cpuinfo.min_freq = CONFIG_MSM_CPU_FREQ_MIN;
 		policy->cpuinfo.max_freq = CONFIG_MSM_CPU_FREQ_MAX;
 #endif
+#endif
 	}
 #ifdef CONFIG_MSM_CPU_FREQ_SET_MIN_MAX
+#ifdef CONFIG_LOW_CPUCLOCKS
+	policy->min = LOW_CPUCLOCKS_FREQ_MIN;
+#else
 	policy->min = CONFIG_MSM_CPU_FREQ_MIN;
 	policy->max = CONFIG_MSM_CPU_FREQ_MAX;
+#endif
 #endif
 
 	cur_freq = acpuclk_get_rate(policy->cpu);
@@ -241,10 +256,13 @@ static int __cpuinit msm_cpufreq_init(struct cpufreq_policy *policy)
 		cur_freq = table[index].frequency;
 	}
 
-	policy->cur = cur_freq;
+	policy->cur = CONFIG_MSM_CPU_FREQ_MAX;
 
 	policy->cpuinfo.transition_latency =
 		acpuclk_get_switch_time() * NSEC_PER_USEC;
+	/* set safe default min and max speeds */
+	policy->max = CONFIG_MSM_CPU_FREQ_MAX;
+	policy->min = CONFIG_MSM_CPU_FREQ_MIN;
 
 	return 0;
 }
@@ -276,6 +294,43 @@ static int __cpuinit msm_cpufreq_cpu_callback(struct notifier_block *nfb,
 
 static struct notifier_block __refdata msm_cpufreq_cpu_notifier = {
 	.notifier_call = msm_cpufreq_cpu_callback,
+};
+
+#ifdef CONFIG_CPU_FREQ_GOV_INTELLIDEMAND
+extern bool lmf_screen_state;
+#endif
+
+static void msm_cpu_early_suspend(struct early_suspend *h)
+{
+#ifdef CONFIG_CPUFREQ_LIMIT_MAX_FREQ
+	int cpu = 0;
+
+	for_each_possible_cpu(cpu) {
+		mutex_lock(&per_cpu(cpufreq_suspend, cpu).suspend_mutex);
+		lmf_screen_state = false;
+		mutex_unlock(&per_cpu(cpufreq_suspend, cpu).suspend_mutex);
+	}
+#endif
+}
+
+static void msm_cpu_late_resume(struct early_suspend *h)
+{
+#ifdef CONFIG_CPUFREQ_LIMIT_MAX_FREQ
+	int cpu = 0;
+
+	for_each_possible_cpu(cpu) {
+
+		mutex_lock(&per_cpu(cpufreq_suspend, cpu).suspend_mutex);
+		lmf_screen_state = true;
+		mutex_unlock(&per_cpu(cpufreq_suspend, cpu).suspend_mutex);
+	}
+#endif
+}
+
+static struct early_suspend msm_cpu_early_suspend_handler = {
+	.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN,
+	.suspend = msm_cpu_early_suspend,
+	.resume = msm_cpu_late_resume,
 };
 
 /*
@@ -334,6 +389,7 @@ static int __init msm_cpufreq_register(void)
 	}
 
 	register_hotcpu_notifier(&msm_cpufreq_cpu_notifier);
+	register_early_suspend(&msm_cpu_early_suspend_handler);
 
 	return cpufreq_register_driver(&msm_cpufreq_driver);
 }
